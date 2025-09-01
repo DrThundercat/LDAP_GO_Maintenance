@@ -51,11 +51,13 @@ type LDAPConfig struct {
 	Timeout int `yaml:"timeout"`
 }
 
-// PasswordConfig controls how new passwords are generated
+// PasswordConfig controls how new passwords are generated or specified
 // These settings ensure passwords meet your security requirements
+// You can either generate random passwords or specify predefined ones
 // Adjust complexity and length based on your organization's policies
 type PasswordConfig struct {
 	// Length of generated passwords (minimum 12 recommended)
+	// Only used when generating random passwords
 	Length int `yaml:"length"`
 
 	// Include uppercase letters (A-Z)
@@ -72,6 +74,23 @@ type PasswordConfig struct {
 
 	// Characters to exclude from passwords (to avoid confusion)
 	ExcludeChars string `yaml:"exclude_chars"`
+
+	// Predefined passwords for specific replication agreements
+	// If specified, these passwords will be used instead of generating random ones
+	// Format: agreement_name: password
+	// Example:
+	//   agreement-to-consumer1: "MySecurePassword123!"
+	//   agreement-to-consumer2: "AnotherSecurePass456@"
+	PredefinedPasswords map[string]string `yaml:"predefined_passwords"`
+
+	// Default password to use for all agreements if no specific password is defined
+	// If empty, random passwords will be generated
+	// This is useful when you want all agreements to use the same password
+	DefaultPassword string `yaml:"default_password"`
+
+	// Whether to generate random passwords when no predefined password is available
+	// If false and no predefined/default password exists, the operation will fail
+	GenerateRandom bool `yaml:"generate_random"`
 }
 
 // GRPCConfig settings for real-time error monitoring
@@ -162,6 +181,16 @@ func setDefaults(config *Config) {
 	// Exclude confusing characters by default
 	if config.Password.ExcludeChars == "" {
 		config.Password.ExcludeChars = "0O1lI" // Avoid look-alike characters
+	}
+
+	// Initialize predefined passwords map if nil
+	if config.Password.PredefinedPasswords == nil {
+		config.Password.PredefinedPasswords = make(map[string]string)
+	}
+
+	// Enable random generation by default if no other password source is configured
+	if config.Password.DefaultPassword == "" && len(config.Password.PredefinedPasswords) == 0 {
+		config.Password.GenerateRandom = true
 	}
 
 	// GRPC defaults
