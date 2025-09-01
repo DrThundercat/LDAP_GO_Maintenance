@@ -1,0 +1,81 @@
+# 389DS LDAP Replication Password Manager Configuration
+# This file controls how the application connects to your LDAP servers
+# and manages replication agreement passwords.
+#
+# IMPORTANT: Keep this file secure as it contains LDAP credentials!
+# Recommended permissions: chmod 600 config.yaml
+
+# LDAP Server Configuration
+# These settings control how the application connects to your 389DS server
+ldap:
+  # Primary LDAP server hostname or IP address
+  # This should be your supplier/hub server
+  host: "ldap.example.com"
+  
+  # LDAP port (389 for standard LDAP, 636 for LDAPS)
+  port: 389
+  
+  # Bind DN for LDAP operations
+  # This account needs permission to read and modify replication configuration
+  # Typically use "cn=Directory Manager" or a dedicated service account
+  bind_dn: "cn=Directory Manager"
+  
+  # Password for the bind DN account
+  # SECURITY: Consider using environment variables or secure key management
+  password: "your-directory-manager-password"
+  
+  # Base DN for searching replication agreements
+  # For 389DS, this is typically "cn=config"
+  base_dn: "cn=config"
+  
+  # TLS/SSL settings for secure connections
+  use_tls: false
+  skip_tls_verify: false
+  
+  # Connection timeout in seconds
+  timeout: 30
+
+# Password Generation Settings
+# These control the complexity and format of generated passwords
+password:
+  # Length of generated passwords (minimum 8, recommended 16+)
+  length: 16
+  
+  # Character types to include in passwords
+  include_uppercase: true
+  include_lowercase: true
+  include_numbers: true
+  include_special: true
+  
+  # Characters to exclude to avoid confusion (0/O, 1/l/I, etc.)
+  exclude_chars: "0O1lI"
+
+# GRPC Monitoring Configuration
+# These settings control real-time error 49 detection
+grpc:
+  # Enable GRPC monitoring for real-time error detection
+  enabled: true
+  
+  # Port for GRPC server to listen on
+  port: 50051
+  
+  # Log file paths to monitor for error 49 events
+  # Add all relevant 389DS log files for your environment
+  log_paths:
+    - "/var/log/dirsrv/slapd-ldap/errors"
+    - "/var/log/dirsrv/slapd-ldap/access"
+  
+  # How often to check log files (in seconds)
+  check_interval: 5
+
+# Logging Configuration
+# Controls application logging behavior
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  
+  # Log file path (empty means stdout only)
+  file: ""
+  
+  # Enable timestamps in log messages
+  timestamps: true
