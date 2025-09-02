@@ -138,7 +138,7 @@ grpc:
 ./ldap-replication-manager --config config-production.yaml --dry-run
 ```
 
-This shows what would be changed without making actual modifications.
+This connects to your real LDAP servers, discovers actual replication agreements, and shows exactly what would be changed without making any modifications. This is the safest way to test your configuration.
 
 2. **Apply changes**:
 ```bash
@@ -167,9 +167,13 @@ This will:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--config` | Path to configuration file | `config.yaml` |
+| `--edu` | Educational mode - simulated LDAP operations for learning | `false` |
+| `--prod` | Production mode - real LDAP operations (requires real server) | `false` |
 | `--dry-run` | Show changes without applying them | `false` |
 | `--verbose` | Enable detailed logging | `false` |
 | `--monitor` | Start GRPC monitoring | `false` |
+
+**Note**: Only one mode can be active at a time (`--edu`, `--prod`, or `--dry-run`). If no mode is specified, educational mode is used by default for safety.
 
 ## Understanding the Output
 

@@ -25,8 +25,37 @@ func main() {
 		dryRun        = flag.Bool("dry-run", false, "Show what would be changed without making changes")
 		verbose       = flag.Bool("verbose", false, "Enable verbose logging")
 		enableMonitor = flag.Bool("monitor", false, "Start GRPC monitoring for error 49 detection")
+		eduMode       = flag.Bool("edu", false, "Educational mode - uses simulated LDAP operations for learning")
+		prodMode      = flag.Bool("prod", false, "Production mode - performs real LDAP operations (requires real LDAP server)")
 	)
 	flag.Parse()
+
+	// Validate mode flags - only one mode can be active at a time
+	// This ensures clear operation mode and prevents confusion
+	modeCount := 0
+	var operationMode string
+
+	if *eduMode {
+		modeCount++
+		operationMode = "educational"
+	}
+	if *prodMode {
+		modeCount++
+		operationMode = "production"
+	}
+	if *dryRun {
+		modeCount++
+		operationMode = "dry-run"
+	}
+
+	// Default to educational mode if no mode is specified
+	// This makes the application safe by default for learning
+	if modeCount == 0 {
+		*eduMode = true
+		operationMode = "educational (default)"
+	} else if modeCount > 1 {
+		log.Fatalf("Error: Only one mode can be specified at a time (--edu, --prod, or --dry-run)")
+	}
 
 	// Load configuration from file
 	// This separates configuration from code, making it easier for non-developers to modify
@@ -43,6 +72,25 @@ func main() {
 
 	fmt.Println("389DS LDAP Replication Password Manager")
 	fmt.Println("======================================")
+	fmt.Printf("Operation Mode: %s\n", operationMode)
+
+	// Display mode-specific information
+	if *eduMode {
+		fmt.Println("📚 EDUCATIONAL MODE: Using simulated LDAP operations for learning")
+		fmt.Println("   - No real LDAP connections will be made")
+		fmt.Println("   - Safe for learning and testing concepts")
+		fmt.Println("   - Use --prod flag for real operations")
+	} else if *prodMode {
+		fmt.Println("🔧 PRODUCTION MODE: Performing real LDAP operations")
+		fmt.Println("   - Will connect to actual LDAP servers")
+		fmt.Println("   - Will make real password changes")
+		fmt.Println("   - Ensure your configuration is correct!")
+	} else if *dryRun {
+		fmt.Println("🔍 DRY-RUN MODE: Showing planned changes without execution")
+		fmt.Println("   - Will connect to LDAP servers for discovery")
+		fmt.Println("   - Will NOT make any password changes")
+		fmt.Println("   - Safe for testing configuration")
+	}
 
 	// If monitor flag is set, start GRPC monitoring for real-time error detection
 	if *enableMonitor {
@@ -52,7 +100,8 @@ func main() {
 
 	// Create LDAP manager to handle all LDAP operations
 	// This encapsulates LDAP complexity and provides simple methods
-	ldapManager, err := ldap.NewManager(cfg)
+	// Pass the operation mode to determine if we use real or simulated LDAP operations
+	ldapManager, err := ldap.NewManager(cfg, *eduMode, *prodMode)
 	if err != nil {
 		log.Fatalf("Failed to create LDAP manager: %v", err)
 	}
@@ -100,15 +149,37 @@ func main() {
 		fmt.Printf("    Consumer: %s\n", consumerCmd)
 	}
 
-	// If dry-run mode, exit without making changes
+	// Handle different operation modes
 	if *dryRun {
-		fmt.Println("\nDry-run mode: No changes were made.")
-		fmt.Println("Use the LDAP commands above to make changes manually,")
-		fmt.Println("or run without --dry-run flag to apply changes automatically.")
+		// Dry-run mode: show what would be changed by calling the update methods
+		// The LDAP manager will handle dry-run mode by showing changes without executing
+		fmt.Println("\nStep 4: Dry-run simulation - showing what would be changed...")
+		for _, agreement := range agreements {
+			newPassword := newPasswords[agreement.Name]
+
+			fmt.Printf("Processing agreement: %s\n", agreement.Name)
+
+			// Call update methods - they will show what would be changed in dry-run mode
+			if err := ldapManager.UpdateReplicationPassword(agreement.Supplier, agreement.Name, newPassword, "supplier"); err != nil {
+				log.Printf("Error in dry-run simulation for supplier %s: %v", agreement.Name, err)
+				continue
+			}
+
+			if err := ldapManager.UpdateReplicationPassword(agreement.Consumer, agreement.Name, newPassword, "consumer"); err != nil {
+				log.Printf("Error in dry-run simulation for consumer %s: %v", agreement.Name, err)
+				continue
+			}
+
+			fmt.Printf("  ✓ Dry-run simulation completed for %s\n", agreement.Name)
+		}
+
+		fmt.Println("\nDry-run completed: No actual changes were made.")
+		fmt.Println("Use the LDAP commands shown above to make changes manually,")
+		fmt.Println("or run with --prod flag to apply changes automatically.")
 		return
 	}
 
-	// Ask for confirmation before making changes
+	// Production and educational modes: ask for confirmation before proceeding
 	fmt.Print("\nDo you want to apply these changes? (y/N): ")
 	var response string
 	fmt.Scanln(&response)
@@ -118,7 +189,7 @@ func main() {
 		return
 	}
 
-	// Apply password changes
+	// Apply password changes (production mode will execute, educational mode will simulate)
 	fmt.Println("\nStep 4: Applying password changes...")
 	for _, agreement := range agreements {
 		newPassword := newPasswords[agreement.Name]
@@ -141,5 +212,9 @@ func main() {
 	}
 
 	fmt.Println("\nPassword update completed!")
-	fmt.Println("Monitor your /var/log/dirsrv/slapd-ldap/errors logs for any remaining error 49 messages.")
+	if *prodMode {
+		fmt.Println("Monitor your /var/log/dirsrv/slapd-ldap/errors logs for any remaining error 49 messages.")
+	} else {
+		fmt.Println("Educational mode completed - no real changes were made.")
+	}
 }
