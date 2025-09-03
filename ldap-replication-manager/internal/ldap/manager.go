@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/ldap-replication-manager/internal/config"
 )
 
@@ -41,11 +41,9 @@ type ReplicationAgreement struct {
 // Non-programmers can understand what each method does from its name
 type Manager struct {
 	config    *config.Config
-	eduMode   bool // Educational mode - simulates LDAP operations
-	prodMode  bool // Production mode - performs real LDAP operations
 	connected bool
-	// In production mode, this would contain real LDAP connection objects
-	// In educational mode, we simulate LDAP operations for learning
+	ldapConn  *ldap.Conn
+	DryRun    bool // If true, only preview changes
 }
 
 // NewManager creates a new LDAP manager instance
@@ -55,40 +53,28 @@ type Manager struct {
 // Dry-run mode connects to real servers but doesn't make changes
 // This design pattern separates connection management from business logic
 func NewManager(cfg *config.Config, eduMode, prodMode bool) (*Manager, error) {
-	manager := &Manager{
-		config:   cfg,
-		eduMode:  eduMode,
-		prodMode: prodMode,
-	}
-
-	if eduMode {
-		// Educational mode - simulate connection for learning
-		log.Printf("📚 [EDU MODE] Simulating connection to LDAP server: %s:%d", cfg.LDAP.Host, cfg.LDAP.Port)
-		log.Printf("📚 [EDU MODE] Simulating bind with DN: %s", cfg.LDAP.BindDN)
-		log.Println("📚 [EDU MODE] Simulated LDAP connection successful")
-		manager.connected = true
-	} else {
-		// Production and dry-run modes both connect to real LDAP servers
-		// The difference is that dry-run shows what would be changed without executing
-		var modeLabel string
-		if prodMode {
-			modeLabel = "🔧 [PROD MODE]"
-		} else {
-			modeLabel = "🔍 [DRY-RUN]"
+		// Accept dry-run as an argument (add to constructor signature in main.go)
+		manager := &Manager{
+			config: cfg,
+			DryRun: false, // default, will be set by main.go
 		}
 
-		log.Printf("%s Connecting to LDAP server: %s:%d", modeLabel, cfg.LDAP.Host, cfg.LDAP.Port)
-		log.Printf("%s Using bind DN: %s", modeLabel, cfg.LDAP.BindDN)
+	// Connect to LDAP
+	l, err := ldap.DialURL(fmt.Sprintf("ldap://%s:%d", cfg.LDAP.Host, cfg.LDAP.Port))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to LDAP server: %v", err)
+	}
+	manager.ldapConn = l
 
-		// Both modes perform real connection validation
-		if err := manager.testConnection(); err != nil {
-			return nil, fmt.Errorf("failed to connect to LDAP server: %v", err)
-		}
-
-		manager.connected = true
-		log.Printf("%s Successfully connected to LDAP server", modeLabel)
+	// Bind
+	err = l.Bind(cfg.LDAP.BindDN, cfg.LDAP.Password)
+	if err != nil {
+		l.Close()
+		return nil, fmt.Errorf("failed to bind to LDAP server: %v", err)
 	}
 
+	manager.connected = true
+	log.Printf("Connected and bound to LDAP server: %s:%d", cfg.LDAP.Host, cfg.LDAP.Port)
 	return manager, nil
 }
 
@@ -96,8 +82,9 @@ func NewManager(cfg *config.Config, eduMode, prodMode bool) (*Manager, error) {
 // This ensures proper cleanup of network resources
 // Always call this method when done with the manager
 func (m *Manager) Close() {
-	if m.connected {
-		log.Println("Closing LDAP connections")
+	if m.connected && m.ldapConn != nil {
+		log.Println("Closing LDAP connection")
+		m.ldapConn.Close()
 		m.connected = false
 	}
 }
@@ -108,36 +95,44 @@ func (m *Manager) Close() {
 // The search is performed in the cn=config subtree where 389DS stores configuration
 // Understanding this helps administrators see what agreements exist in their environment
 func (m *Manager) DiscoverReplicationAgreements() ([]ReplicationAgreement, error) {
-	if !m.connected {
+	if !m.connected || m.ldapConn == nil {
 		return nil, fmt.Errorf("not connected to LDAP server")
 	}
 
 	log.Println("Searching for replication agreements...")
 
-	// In a real implementation, this would perform an LDAP search like:
-	// ldapsearch -x -D "cn=Directory Manager" -W -b "cn=config"
-	//           "(objectclass=nsds5replicationagreement)"
-	//           cn nsds5replicahost nsds5replicabinddn
+	searchRequest := ldap.NewSearchRequest(
+		m.config.LDAP.BaseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		"(objectClass=nsds5ReplicationAgreement)",
+		[]string{"cn", "nsds5replicahost", "nsds5replicabinddn", "dn", "nsds5replicaenabled"},
+		nil,
+	)
 
-	// For this educational example, we'll simulate finding agreements
-	// This helps demonstrate the concept without requiring a live LDAP server
-	agreements := []ReplicationAgreement{
-		{
-			Name:     "agreement-to-consumer1",
-			Supplier: m.config.LDAP.Host,
-			Consumer: "consumer1.example.com",
-			BindDN:   "cn=replication manager,cn=config",
-			DN:       "cn=agreement-to-consumer1,cn=replica,cn=dc=example,dc=com,cn=mapping tree,cn=config",
-			Enabled:  true,
-		},
-		{
-			Name:     "agreement-to-consumer2",
-			Supplier: m.config.LDAP.Host,
-			Consumer: "consumer2.example.com",
-			BindDN:   "cn=replication manager,cn=config",
-			DN:       "cn=agreement-to-consumer2,cn=replica,cn=dc=example,dc=com,cn=mapping tree,cn=config",
-			Enabled:  true,
-		},
+	sr, err := m.ldapConn.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP search failed: %v", err)
+	}
+
+	agreements := []ReplicationAgreement{}
+	for _, entry := range sr.Entries {
+		name := entry.GetAttributeValue("cn")
+		supplier := m.config.LDAP.Host
+		consumer := entry.GetAttributeValue("nsds5replicahost")
+		bindDN := entry.GetAttributeValue("nsds5replicabinddn")
+		dn := entry.DN
+		enabled := true
+		if val := entry.GetAttributeValue("nsds5replicaenabled"); val != "on" && val != "true" {
+			enabled = false
+		}
+		agreements = append(agreements, ReplicationAgreement{
+			Name:     name,
+			Supplier: supplier,
+			Consumer: consumer,
+			BindDN:   bindDN,
+			DN:       dn,
+			Enabled:  enabled,
+		})
 	}
 
 	log.Printf("Found %d replication agreements", len(agreements))
@@ -155,71 +150,37 @@ func (m *Manager) DiscoverReplicationAgreements() ([]ReplicationAgreement, error
 // In educational mode, this simulates the operations for learning
 // In dry-run mode, this shows what would be changed without executing
 func (m *Manager) UpdateReplicationPassword(server, agreementName, newPassword, serverType string) error {
-	if !m.connected {
+	if !m.connected || m.ldapConn == nil {
 		return fmt.Errorf("not connected to LDAP server")
 	}
 
-	if m.eduMode {
-		// Educational mode - simulate the password update for learning
-		log.Printf("📚 [EDU MODE] Simulating %s password update for agreement %s on server %s", serverType, agreementName, server)
-		time.Sleep(50 * time.Millisecond) // Simulate network delay
-
-		if serverType == "supplier" {
-			log.Printf("📚 [EDU MODE] Would update nsds5replicacredentials attribute for agreement %s", agreementName)
-		} else {
-			log.Printf("📚 [EDU MODE] Would update replication manager password on consumer %s", server)
-		}
-
-		log.Printf("📚 [EDU MODE] Simulated successful %s password update for %s", serverType, agreementName)
-		return nil
-
-	} else if m.prodMode {
-		// Production mode - perform real LDAP operations
-		log.Printf("🔧 [PROD MODE] Updating %s password for agreement %s on server %s", serverType, agreementName, server)
-
-		// TODO: In a real implementation, this would execute actual LDAP modify operations
-		// For now, we'll simulate but indicate this is where real operations would occur
-		log.Printf("🔧 [PROD MODE] ⚠️  REAL LDAP OPERATIONS WOULD OCCUR HERE")
-		log.Printf("🔧 [PROD MODE] ⚠️  This requires actual LDAP library integration")
-
-		// Simulate the real operation timing
-		time.Sleep(200 * time.Millisecond)
-
-		if serverType == "supplier" {
-			log.Printf("🔧 [PROD MODE] Would execute: ldapmodify to update nsds5replicacredentials for %s", agreementName)
-		} else {
-			log.Printf("🔧 [PROD MODE] Would execute: ldapmodify to update userPassword on consumer %s", server)
-		}
-
-		// In a real implementation, error handling would check for:
-		// - LDAP error 49 (invalid credentials)
-		// - LDAP error 32 (no such object)
-		// - Network connectivity issues
-		// - Permission denied errors
-
-		log.Printf("🔧 [PROD MODE] Successfully updated %s password for %s", serverType, agreementName)
-		return nil
-
-	} else {
-		// Dry-run mode - show what would be changed without executing
-		log.Printf("🔍 [DRY-RUN] Would update %s password for agreement %s on server %s", serverType, agreementName, server)
-
-		if serverType == "supplier" {
-			log.Printf("🔍 [DRY-RUN] Would update nsds5replicacredentials attribute for agreement %s", agreementName)
-			log.Printf("🔍 [DRY-RUN] New password would be: %s", newPassword)
-		} else {
-			log.Printf("🔍 [DRY-RUN] Would update replication manager password on consumer %s", server)
-			log.Printf("🔍 [DRY-RUN] New password would be: %s", newPassword)
-		}
-
-		// Show the exact LDAP command that would be executed
-		command := m.GeneratePasswordUpdateCommand(server, agreementName, newPassword, serverType)
-		log.Printf("🔍 [DRY-RUN] Manual command to execute this change:")
-		log.Printf("🔍 [DRY-RUN] %s", command)
-
-		log.Printf("🔍 [DRY-RUN] No actual changes made - this is a dry run")
+	if m.DryRun {
+		// Print the planned LDAP modify command
+		cmd := m.GeneratePasswordUpdateCommand(server, agreementName, newPassword, serverType)
+		log.Printf("[DRY-RUN] Would execute: %s", cmd)
 		return nil
 	}
+
+	var modifyReq *ldap.ModifyRequest
+	if serverType == "supplier" {
+		// Update nsds5replicacredentials on the agreement DN
+		agreementDN := fmt.Sprintf("cn=%s,cn=replica,cn=dc=example,dc=com,cn=mapping tree,cn=config", agreementName)
+		modifyReq = ldap.NewModifyRequest(agreementDN, nil)
+		modifyReq.Replace("nsds5replicacredentials", []string{newPassword})
+	} else {
+		// Update userPassword on replication manager DN on consumer
+		replicationManagerDN := "cn=replication manager,cn=config"
+		modifyReq = ldap.NewModifyRequest(replicationManagerDN, nil)
+		modifyReq.Replace("userPassword", []string{newPassword})
+	}
+
+	err := m.ldapConn.Modify(modifyReq)
+	if err != nil {
+		return fmt.Errorf("LDAP password update failed: %v", err)
+	}
+
+	log.Printf("Successfully updated %s password for agreement %s on server %s", serverType, agreementName, server)
+	return nil
 }
 
 // GeneratePasswordUpdateCommand creates the LDAP command for manual password updates
@@ -249,29 +210,7 @@ func (m *Manager) GeneratePasswordUpdateCommand(server, agreementName, newPasswo
 // This method performs a simple bind operation to verify credentials
 // It's called during manager initialization to catch connection problems early
 // The test helps ensure that subsequent operations will succeed
-func (m *Manager) testConnection() error {
-	// In a real implementation, this would perform an LDAP bind operation
-	// For this educational example, we'll simulate the test
-
-	log.Println("Testing LDAP connection...")
-
-	// Simulate connection validation
-	if m.config.LDAP.Host == "" {
-		return fmt.Errorf("LDAP host not configured")
-	}
-
-	if m.config.LDAP.BindDN == "" {
-		return fmt.Errorf("LDAP bind DN not configured")
-	}
-
-	// In a real implementation, you would check:
-	// - Network connectivity to the LDAP server
-	// - Authentication with the provided credentials
-	// - Permissions to read replication configuration
-	// - TLS certificate validation if using secure connections
-
-	log.Println("LDAP connection test successful")
-	return nil
+// ...existing code...
 }
 
 // GetReplicationStatus checks the current status of replication agreements

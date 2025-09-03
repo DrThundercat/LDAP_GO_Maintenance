@@ -39,39 +39,18 @@ func (m *Manager) GeneratePasswords(agreements []ldap.ReplicationAgreement) map[
 	passwords := make(map[string]string)
 
 	for _, agreement := range agreements {
-		var password string
-		var source string
-
-		// First priority: Check for agreement-specific predefined password
+		// Only use predefined passwords, or default if not specified
+		password := ""
 		if predefinedPassword, exists := m.config.Password.PredefinedPasswords[agreement.Name]; exists && predefinedPassword != "" {
 			password = predefinedPassword
-			source = "predefined (agreement-specific)"
+			fmt.Printf("Password for agreement '%s': using predefined password\n", agreement.Name)
 		} else if m.config.Password.DefaultPassword != "" {
-			// Second priority: Use default password if specified
 			password = m.config.Password.DefaultPassword
-			source = "predefined (default)"
-		} else if m.config.Password.GenerateRandom {
-			// Third priority: Generate random password if enabled
-			generatedPassword, err := m.generateSecurePassword()
-			if err != nil {
-				// In case of generation failure, create a fallback password
-				// This ensures the application doesn't fail completely
-				password = m.generateFallbackPassword(agreement.Name)
-				source = "generated (fallback)"
-			} else {
-				password = generatedPassword
-				source = "generated (random)"
-			}
+			fmt.Printf("Password for agreement '%s': using default password\n", agreement.Name)
 		} else {
-			// No password source available - use fallback to prevent failure
-			password = m.generateFallbackPassword(agreement.Name)
-			source = "generated (emergency fallback)"
+			fmt.Printf("Password for agreement '%s': ERROR - no predefined or default password found!\n", agreement.Name)
 		}
-
 		passwords[agreement.Name] = password
-
-		// Log the password source for transparency and debugging
-		fmt.Printf("Password for agreement '%s': %s\n", agreement.Name, source)
 	}
 
 	return passwords
