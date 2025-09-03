@@ -53,11 +53,11 @@ type Manager struct {
 // Dry-run mode connects to real servers but doesn't make changes
 // This design pattern separates connection management from business logic
 func NewManager(cfg *config.Config, eduMode, prodMode bool) (*Manager, error) {
-		// Accept dry-run as an argument (add to constructor signature in main.go)
-		manager := &Manager{
-			config: cfg,
-			DryRun: false, // default, will be set by main.go
-		}
+	// Accept dry-run as an argument (add to constructor signature in main.go)
+	manager := &Manager{
+		config: cfg,
+		DryRun: false, // default, will be set by main.go
+	}
 
 	// Connect to LDAP
 	l, err := ldap.DialURL(fmt.Sprintf("ldap://%s:%d", cfg.LDAP.Host, cfg.LDAP.Port))
@@ -204,13 +204,6 @@ func (m *Manager) GeneratePasswordUpdateCommand(server, agreementName, newPasswo
 		return fmt.Sprintf("ldapmodify -x -D \"%s\" -W -H ldap://%s:%d << EOF\ndn: %s\nchangetype: modify\nreplace: userPassword\nuserPassword: %s\nEOF",
 			m.config.LDAP.BindDN, server, m.config.LDAP.Port, replicationManagerDN, newPassword)
 	}
-}
-
-// testConnection validates connectivity to the LDAP server
-// This method performs a simple bind operation to verify credentials
-// It's called during manager initialization to catch connection problems early
-// The test helps ensure that subsequent operations will succeed
-// ...existing code...
 }
 
 // GetReplicationStatus checks the current status of replication agreements
