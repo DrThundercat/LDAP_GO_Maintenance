@@ -1,0 +1,35 @@
+ldap:
+  host: my-ldap-server.example.com
+  port: 389
+  bind_dn: "cn=Directory Manager"
+  password: "appleapple"
+  base_dn: "cn=config"
+  use_tls: false
+  skip_tls_verify: false
+  timeout: 30
+
+password:
+  length: 10
+  include_uppercase: false
+  include_lowercase: true
+  include_numbers: false
+  include_special: false
+  exclude_chars: ""
+  predefined_passwords:
+    agreement-to-consumer1: "appleapple"
+    agreement-to-consumer2: "appleapple"
+  default_password: "appleapple"
+  generate_random: false
+
+grpc:
+  enabled: false
+  port: 50051
+  log_paths:
+    - "/var/log/dirsrv/slapd-ldap/errors"
+    - "/var/log/dirsrv/slapd-ldap/access"
+  check_interval: 5
+
+logging:
+  level: info
+  file: ""
+  timestamps: true
