@@ -105,8 +105,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create LDAP manager: %v", err)
 	}
-ldapManager.DryRun = *dryRun // Ensure dry-run mode is set
-defer ldapManager.Close()
+	ldapManager.DryRun = *dryRun // Ensure dry-run mode is set
+	defer ldapManager.Close()
 
 	// Create password manager to handle password generation and updates
 	// This component ensures secure password generation and proper updates
